@@ -1,0 +1,65 @@
+type CreateEventPayload = record {
+  date : nat64;
+  name : text;
+  ticket_price : nat64;
+  total_tickets : nat64;
+  location : text;
+};
+type Event = record {
+  id : nat64;
+  date : nat64;
+  name : text;
+  ticket_price : nat64;
+  tickets_sold : nat64;
+  total_tickets : nat64;
+  location : text;
+};
+type LoyaltyPoints = record {
+  points_history : vec PointsTransaction;
+  tier : LoyaltyTier;
+  user_id : nat64;
+  points : nat64;
+};
+type LoyaltyTier = variant { Gold; Platinum; Bronze; Silver };
+type Message = variant {
+  Error : text;
+  InvalidPayload : text;
+  InsufficientTickets : text;
+  NotFound : text;
+  Success : text;
+};
+type PointsTransaction = record {
+  description : text;
+  timestamp : nat64;
+  points : int64;
+};
+type PurchaseTicketPayload = record {
+  user_id : nat64;
+  seat_number : text;
+  event_id : nat64;
+};
+type RegisterUserPayload = record { username : text; email : text };
+type Result = variant { Ok : LoyaltyPoints; Err : Message };
+type Result_1 = variant { Ok : Event; Err : Message };
+type Result_2 = variant { Ok : Ticket; Err : Message };
+type Result_3 = variant { Ok : text; Err : Message };
+type Result_4 = variant { Ok : User; Err : Message };
+type Ticket = record {
+  id : nat64;
+  user_id : nat64;
+  seat_number : text;
+  purchase_date : nat64;
+  event_id : nat64;
+  price : nat64;
+};
+type User = record { id : nat64; username : text; email : text };
+service : {
+  award_loyalty_points : (nat64, nat64) -> (Result);
+  create_event : (CreateEventPayload) -> (Result_1);
+  list_all_events : () -> (vec Event) query;
+  list_tickets_for_user : (nat64) -> (vec Ticket) query;
+  purchase_ticket : (PurchaseTicketPayload) -> (Result_2);
+  purchase_ticket_with_dynamic_pricing : (PurchaseTicketPayload) -> (Result_2);
+  redeem_points : (nat64, nat64) -> (Result_3);
+  register_user : (RegisterUserPayload) -> (Result_4);
+}
