@@ -232,6 +232,16 @@ thread_local! {
     );
 }
 
+// Helper function for ID generation
+fn generate_unique_id() -> u64 {
+    ID_COUNTER.with(|counter| {
+        let mut counter = counter.borrow_mut();
+        let current_value = *counter.get(); // Dereference to get a copy of the value
+        counter.set(current_value + 1).expect("Failed to increment ID");
+        current_value + 1
+    })
+}
+
 // Function to register a user
 #[ic_cdk::update]
 fn register_user(payload: RegisterUserPayload) -> Result<User, Message> {
@@ -241,12 +251,7 @@ fn register_user(payload: RegisterUserPayload) -> Result<User, Message> {
         ));
     }
 
-    let user_id = ID_COUNTER
-        .with(|counter| {
-            let current_value = *counter.borrow().get();
-            counter.borrow_mut().set(current_value + 1)
-        })
-        .expect("Counter increment failed");
+    let user_id = generate_unique_id();
 
     let user = User {
         id: user_id,
@@ -275,12 +280,7 @@ fn create_event(payload: CreateEventPayload) -> Result<Event, Message> {
         ));
     }
 
-    let event_id = ID_COUNTER
-        .with(|counter| {
-            let current_value = *counter.borrow().get();
-            counter.borrow_mut().set(current_value + 1)
-        })
-        .expect("Counter increment failed");
+    let event_id = generate_unique_id();
 
     let event = Event {
         id: event_id,
@@ -319,12 +319,7 @@ fn purchase_ticket(payload: PurchaseTicketPayload) -> Result<Ticket, Message> {
                 ));
             }
 
-            let ticket_id = ID_COUNTER
-                .with(|counter| {
-                    let current_value = *counter.borrow().get();
-                    counter.borrow_mut().set(current_value + 1)
-                })
-                .expect("Counter increment failed");
+            let ticket_id = generate_unique_id();
 
             let ticket = Ticket {
                 id: ticket_id,
@@ -343,6 +338,36 @@ fn purchase_ticket(payload: PurchaseTicketPayload) -> Result<Ticket, Message> {
             });
 
             Ok(ticket)
+        } else {
+            Err(Message::NotFound("Event not found".to_string()))
+        }
+    })
+}
+
+// Helper function to validate email
+fn validate_email(email: &str) -> bool {
+    email.contains('@') && email.contains('.')
+}
+
+// Function to list events by location
+#[ic_cdk::query]
+fn list_events_by_location(location: String) -> Vec<Event> {
+    EVENTS_STORAGE.with(|storage| {
+        storage
+            .borrow()
+            .iter()
+            .filter(|(_, event)| event.location == location)
+            .map(|(_, event)| event.clone())
+            .collect()
+    })
+}
+
+// Function to get event details by ID
+#[ic_cdk::query]
+fn get_event_details(event_id: u64) -> Result<Event, Message> {
+    EVENTS_STORAGE.with(|storage| {
+        if let Some(event) = storage.borrow().get(&event_id) {
+            Ok(event.clone())
         } else {
             Err(Message::NotFound("Event not found".to_string()))
         }
