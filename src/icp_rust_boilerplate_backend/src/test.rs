@@ -1,188 +1,233 @@
-// New structs for additional features
-#[derive(candid::CandidType, Clone, Serialize, Deserialize, Default)]
-struct LoyaltyPoints {
-    user_id: u64,
-    points: u64,
-    tier: LoyaltyTier,
-    points_history: Vec<PointsTransaction>,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
 
-#[derive(candid::CandidType, Clone, Serialize, Deserialize)]
-enum LoyaltyTier {
-    Bronze,
-    Silver,
-    Gold,
-    Platinum,
-}
-
-impl Default for LoyaltyTier {
-    fn default() -> Self {
-        LoyaltyTier::Bronze
+    thread_local! {
+        static TEST_MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> = RefCell::new(
+            MemoryManager::init(DefaultMemoryImpl::default())
+        );
     }
-}
 
-#[derive(candid::CandidType, Clone, Serialize, Deserialize)]
-struct PointsTransaction {
-    timestamp: u64,
-    points: i64,  // Can be negative for redemptions
-    description: String,
-}
-
-#[derive(candid::CandidType, Clone, Serialize, Deserialize, Default)]
-struct EventSeating {
-    event_id: u64,
-    vip_seats: Vec<String>,
-    premium_seats: Vec<String>,
-    standard_seats: Vec<String>,
-}
-
-#[derive(candid::CandidType, Clone, Serialize, Deserialize)]
-struct EarlyAccessPass {
-    user_id: u64,
-    valid_until: u64,
-    priority_level: u8,
-}
-
-// Add new storage
-thread_local! {
-    static LOYALTY_STORAGE: RefCell<StableBTreeMap<u64, LoyaltyPoints, Memory>> = RefCell::new(
-        StableBTreeMap::init(
-            MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(4)))
-        )
-    );
-
-    static SEATING_STORAGE: RefCell<StableBTreeMap<u64, EventSeating, Memory>> = RefCell::new(
-        StableBTreeMap::init(
-            MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(5)))
-        )
-    );
-}
-
-// Function to award points for ticket purchase
-#[ic_cdk::update]
-fn award_loyalty_points(user_id: u64, purchase_amount: u64) -> Result<LoyaltyPoints, Message> {
-    let points_earned = calculate_points(purchase_amount);
-    
-    LOYALTY_STORAGE.with(|storage| {
-        let mut storage = storage.borrow_mut();
-        let mut loyalty = storage.get(&user_id)
-            .unwrap_or_default();
-        
-        loyalty.points += points_earned;
-        loyalty.points_history.push(PointsTransaction {
-            timestamp: time(),
-            points: points_earned as i64,
-            description: format!("Points earned from purchase: {}", purchase_amount),
-        });
-        
-        // Update tier based on total points
-        loyalty.tier = match loyalty.points {
-            points if points >= 10000 => LoyaltyTier::Platinum,
-            points if points >= 5000 => LoyaltyTier::Gold,
-            points if points >= 2000 => LoyaltyTier::Silver,
-            _ => LoyaltyTier::Bronze,
+    #[test]
+    fn test_register_user() {
+        let payload = RegisterUserPayload {
+            username: "TestUser".to_string(),
+            email: "testuser@example.com".to_string(),
         };
-        
-        storage.insert(user_id, loyalty.clone());
-        Ok(loyalty)
-    })
-}
 
-// Function to redeem points for rewards
-#[ic_cdk::update]
-fn redeem_points(user_id: u64, points_to_redeem: u64) -> Result<String, Message> {
-    LOYALTY_STORAGE.with(|storage| {
-        let mut storage = storage.borrow_mut();
-        if let Some(mut loyalty) = storage.get(&user_id) {
-            if loyalty.points >= points_to_redeem {
-                loyalty.points -= points_to_redeem;
-                loyalty.points_history.push(PointsTransaction {
-                    timestamp: time(),
-                    points: -(points_to_redeem as i64),
-                    description: "Points redemption".to_string(),
-                });
-                
-                storage.insert(user_id, loyalty);
-                Ok("Points successfully redeemed!".to_string())
-            } else {
-                Err(Message::Error("Insufficient points".to_string()))
-            }
-        } else {
-            Err(Message::NotFound("User loyalty account not found".to_string()))
-        }
-    })
-}
+        let result = register_user(payload);
+        assert!(result.is_ok());
+        let user = result.unwrap();
 
-// Modified ticket purchase function to include dynamic pricing
-#[ic_cdk::update]
-fn purchase_ticket_with_dynamic_pricing(payload: PurchaseTicketPayload) -> Result<Ticket, Message> {
-    EVENTS_STORAGE.with(|events| {
-        let mut events = events.borrow_mut();
-        if let Some(event) = events.get(&payload.event_id) {
-            let mut updated_event = event.clone();
-            
-            // Calculate dynamic price based on demand
-            let demand_multiplier = (updated_event.tickets_sold as f64 / updated_event.total_tickets as f64) + 0.5;
-            let dynamic_price = (updated_event.ticket_price as f64 * demand_multiplier) as u64;
-            
-            // Apply loyalty discount if applicable
-            let final_price = LOYALTY_STORAGE.with(|storage| {
-                if let Some(loyalty) = storage.borrow().get(&payload.user_id) {
-                    match loyalty.tier {
-                        LoyaltyTier::Platinum => dynamic_price * 80 / 100,  // 20% discount
-                        LoyaltyTier::Gold => dynamic_price * 85 / 100,      // 15% discount
-                        LoyaltyTier::Silver => dynamic_price * 90 / 100,    // 10% discount
-                        LoyaltyTier::Bronze => dynamic_price * 95 / 100,    // 5% discount
-                    }
-                } else {
-                    dynamic_price
-                }
-            });
+        assert_eq!(user.username, "TestUser");
+        assert_eq!(user.email, "testuser@example.com");
+        assert!(user.id > 0);
+    }
 
-            // Create ticket with dynamic price
-            let ticket_id = ID_COUNTER.with(|counter| {
-                let current_value = *counter.borrow().get();
-                counter.borrow_mut().set(current_value + 1)
-            }).expect("Counter increment failed");
+    #[test]
+    fn test_create_event() {
+        let payload = CreateEventPayload {
+            name: "Test Event".to_string(),
+            location: "Test Location".to_string(),
+            date: 1700000000,
+            ticket_price: 100,
+            total_tickets: 50,
+        };
 
-            let ticket = Ticket {
-                id: ticket_id,
-                event_id: payload.event_id,
-                user_id: payload.user_id,
-                purchase_date: time(),
-                seat_number: payload.seat_number,
-                price: final_price,
-            };
+        let result = create_event(payload);
+        assert!(result.is_ok());
+        let event = result.unwrap();
 
-            updated_event.tickets_sold += 1;
-            events.insert(payload.event_id, updated_event);
+        assert_eq!(event.name, "Test Event");
+        assert_eq!(event.location, "Test Location");
+        assert_eq!(event.date, 1700000000);
+        assert_eq!(event.ticket_price, 100);
+        assert_eq!(event.total_tickets, 50);
+    }
 
-            // Award loyalty points for purchase
-            let _ = award_loyalty_points(payload.user_id, final_price);
+    #[test]
+    fn test_purchase_ticket() {
+        let event_payload = CreateEventPayload {
+            name: "Ticket Event".to_string(),
+            location: "Event Location".to_string(),
+            date: 1700000001,
+            ticket_price: 200,
+            total_tickets: 10,
+        };
 
-            TICKETS_STORAGE.with(|tickets| {
-                tickets.borrow_mut().insert(ticket_id, ticket.clone());
-            });
+        let event_result = create_event(event_payload);
+        assert!(event_result.is_ok());
+        let event = event_result.unwrap();
 
-            Ok(ticket)
-        } else {
-            Err(Message::NotFound("Event not found".to_string()))
-        }
-    })
-}
+        let user_payload = RegisterUserPayload {
+            username: "Buyer".to_string(),
+            email: "buyer@example.com".to_string(),
+        };
 
-// Helper function to calculate points
-fn calculate_points(purchase_amount: u64) -> u64 {
-    // Base rate: 1 point per 10 units spent
-    let base_points = purchase_amount / 10;
-    
-    // Bonus points for larger purchases
-    let bonus_points = match purchase_amount {
-        amount if amount >= 1000 => base_points / 2,  // 50% bonus
-        amount if amount >= 500 => base_points / 4,   // 25% bonus
-        amount if amount >= 200 => base_points / 10,  // 10% bonus
-        _ => 0,
-    };
-    
-    base_points + bonus_points
+        let user_result = register_user(user_payload);
+        assert!(user_result.is_ok());
+        let user = user_result.unwrap();
+
+        let ticket_payload = PurchaseTicketPayload {
+            event_id: event.id,
+            user_id: user.id,
+            seat_number: "A1".to_string(),
+        };
+
+        let ticket_result = purchase_ticket(ticket_payload);
+        assert!(ticket_result.is_ok());
+        let ticket = ticket_result.unwrap();
+
+        assert_eq!(ticket.event_id, event.id);
+        assert_eq!(ticket.user_id, user.id);
+        assert_eq!(ticket.seat_number, "A1");
+        assert_eq!(ticket.price, event.ticket_price);
+    }
+
+    #[test]
+    fn test_award_loyalty_points() {
+        let user_payload = RegisterUserPayload {
+            username: "LoyalUser".to_string(),
+            email: "loyal@example.com".to_string(),
+        };
+
+        let user_result = register_user(user_payload);
+        assert!(user_result.is_ok());
+        let user = user_result.unwrap();
+
+        let points_result = award_loyalty_points(user.id, 500);
+        assert!(points_result.is_ok());
+        let loyalty = points_result.unwrap();
+
+        assert_eq!(loyalty.user_id, user.id);
+        assert!(loyalty.points > 0);
+        assert_eq!(loyalty.tier, LoyaltyTier::Bronze);
+    }
+
+    #[test]
+    fn test_redeem_points() {
+        let user_payload = RegisterUserPayload {
+            username: "Redeemer".to_string(),
+            email: "redeemer@example.com".to_string(),
+        };
+
+        let user_result = register_user(user_payload);
+        assert!(user_result.is_ok());
+        let user = user_result.unwrap();
+
+        let _ = award_loyalty_points(user.id, 1000);
+
+        let redeem_result = redeem_points(user.id, 100);
+        assert!(redeem_result.is_ok());
+        assert_eq!(redeem_result.unwrap(), "Points successfully redeemed!");
+    }
+
+    #[test]
+    fn test_list_events_by_location() {
+        let payload1 = CreateEventPayload {
+            name: "Event 1".to_string(),
+            location: "Location A".to_string(),
+            date: 1700000002,
+            ticket_price: 50,
+            total_tickets: 20,
+        };
+
+        let payload2 = CreateEventPayload {
+            name: "Event 2".to_string(),
+            location: "Location A".to_string(),
+            date: 1700000003,
+            ticket_price: 60,
+            total_tickets: 30,
+        };
+
+        create_event(payload1).unwrap();
+        create_event(payload2).unwrap();
+
+        let events = list_events_by_location("Location A".to_string());
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn test_get_event_details() {
+        let payload = CreateEventPayload {
+            name: "Detailed Event".to_string(),
+            location: "Details Location".to_string(),
+            date: 1700000004,
+            ticket_price: 100,
+            total_tickets: 40,
+        };
+
+        let event_result = create_event(payload);
+        assert!(event_result.is_ok());
+        let event = event_result.unwrap();
+
+        let details_result = get_event_details(event.id);
+        assert!(details_result.is_ok());
+        let details = details_result.unwrap();
+
+        assert_eq!(details.name, "Detailed Event");
+        assert_eq!(details.location, "Details Location");
+        assert_eq!(details.date, 1700000004);
+    }
+
+    #[test]
+    fn test_list_all_events() {
+        let payload1 = CreateEventPayload {
+            name: "Event Alpha".to_string(),
+            location: "Alpha Location".to_string(),
+            date: 1700000005,
+            ticket_price: 70,
+            total_tickets: 25,
+        };
+
+        let payload2 = CreateEventPayload {
+            name: "Event Beta".to_string(),
+            location: "Beta Location".to_string(),
+            date: 1700000006,
+            ticket_price: 80,
+            total_tickets: 35,
+        };
+
+        create_event(payload1).unwrap();
+        create_event(payload2).unwrap();
+
+        let events = list_all_events();
+        assert!(events.len() >= 2);
+    }
+
+    #[test]
+    fn test_list_tickets_for_user() {
+        let user_payload = RegisterUserPayload {
+            username: "TicketUser".to_string(),
+            email: "ticketuser@example.com".to_string(),
+        };
+
+        let user_result = register_user(user_payload);
+        assert!(user_result.is_ok());
+        let user = user_result.unwrap();
+
+        let event_payload = CreateEventPayload {
+            name: "Ticket Event".to_string(),
+            location: "Ticket Location".to_string(),
+            date: 1700000007,
+            ticket_price: 120,
+            total_tickets: 15,
+        };
+
+        let event_result = create_event(event_payload);
+        assert!(event_result.is_ok());
+        let event = event_result.unwrap();
+
+        let ticket_payload = PurchaseTicketPayload {
+            event_id: event.id,
+            user_id: user.id,
+            seat_number: "B1".to_string(),
+        };
+
+        purchase_ticket(ticket_payload).unwrap();
+
+        let tickets = list_tickets_for_user(user.id);
+        assert_eq!(tickets.len(), 1);
+    }
 }

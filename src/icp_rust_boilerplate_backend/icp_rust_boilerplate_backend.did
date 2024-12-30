@@ -56,7 +56,9 @@ type User = record { id : nat64; username : text; email : text };
 service : {
   award_loyalty_points : (nat64, nat64) -> (Result);
   create_event : (CreateEventPayload) -> (Result_1);
+  get_event_details : (nat64) -> (Result_1) query;
   list_all_events : () -> (vec Event) query;
+  list_events_by_location : (text) -> (vec Event) query;
   list_tickets_for_user : (nat64) -> (vec Ticket) query;
   purchase_ticket : (PurchaseTicketPayload) -> (Result_2);
   purchase_ticket_with_dynamic_pricing : (PurchaseTicketPayload) -> (Result_2);
